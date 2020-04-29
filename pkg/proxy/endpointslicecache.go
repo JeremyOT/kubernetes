@@ -23,8 +23,9 @@ import (
 	"strings"
 	"sync"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1beta1"
+	multicluster "k8s.io/api/multicluster/v1alpha1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog"
@@ -338,6 +339,12 @@ func formatEndpointsList(endpoints []Endpoint) []string {
 // endpointSliceCacheKeys returns cache keys used for a given EndpointSlice.
 func endpointSliceCacheKeys(endpointSlice *discovery.EndpointSlice) (types.NamespacedName, string, error) {
 	var err error
+	klog.Infof("EPCK %s/%s - %+v", endpointSlice.Namespace, endpointSlice.Name, endpointSlice.Labels)
+	serviceImportName := endpointSlice.Labels[multicluster.LabelServiceName]
+	if serviceImportName != "" {
+		klog.Infof("Adding EPSlice for imported service: %s/%s", endpointSlice.Namespace, serviceImportName)
+		return types.NamespacedName{Namespace: endpointSlice.Namespace, Name: "mc-import-" + serviceImportName}, endpointSlice.Name, err
+	}
 	serviceName, ok := endpointSlice.Labels[discovery.LabelServiceName]
 	if !ok || serviceName == "" {
 		err = fmt.Errorf("No %s label set on endpoint slice: %s", discovery.LabelServiceName, endpointSlice.Name)

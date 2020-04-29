@@ -20,11 +20,14 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1beta1"
+	multicluster "k8s.io/api/multicluster/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	discoveryinformers "k8s.io/client-go/informers/discovery/v1beta1"
+	multiclusterinformers "k8s.io/client-go/informers/multicluster/v1alpha1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
 )
@@ -239,6 +242,7 @@ func (c *EndpointSliceConfig) handleAddEndpointSlice(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %T", obj))
 		return
 	}
+	klog.Infof("Add EPSlice: %s/%s\n%+v", endpointSlice.Namespace, endpointSlice.Name, endpointSlice.Labels)
 	for _, h := range c.eventHandlers {
 		klog.V(4).Infof("Calling handler.OnEndpointSliceAdd %+v", endpointSlice)
 		h.OnEndpointSliceAdd(endpointSlice)
@@ -366,6 +370,118 @@ func (c *ServiceConfig) handleDeleteService(obj interface{}) {
 			return
 		}
 	}
+	for i := range c.eventHandlers {
+		klog.V(4).Info("Calling handler.OnServiceDelete")
+		c.eventHandlers[i].OnServiceDelete(service)
+	}
+}
+
+// ServiceImportConfig tracks a set of service configurations.
+type ServiceImportConfig struct {
+	listerSynced  cache.InformerSynced
+	eventHandlers []ServiceHandler
+}
+
+// NewServiceImportConfig creates a new ServiceImportConfig.
+func NewServiceImportConfig(serviceInformer multiclusterinformers.ServiceImportInformer, resyncPeriod time.Duration) *ServiceImportConfig {
+	result := &ServiceImportConfig{
+		listerSynced: serviceInformer.Informer().HasSynced,
+	}
+
+	serviceInformer.Informer().AddEventHandlerWithResyncPeriod(
+		cache.ResourceEventHandlerFuncs{
+			AddFunc:    result.handleAddServiceImport,
+			UpdateFunc: result.handleUpdateServiceImport,
+			DeleteFunc: result.handleDeleteServiceImport,
+		},
+		resyncPeriod,
+	)
+
+	return result
+}
+
+func convertImportToService(svc *multicluster.ServiceImport) *v1.Service {
+	return &v1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: svc.Namespace,
+			Name:      "mc-import-" + svc.Name,
+		},
+		Spec: v1.ServiceSpec{
+			ClusterIP: svc.Spec.IP,
+			Ports:     svc.Spec.Ports,
+			Type:      v1.ServiceTypeClusterIP,
+		},
+	}
+}
+
+// RegisterEventHandler registers a handler which is called on every service change.
+func (c *ServiceImportConfig) RegisterEventHandler(handler ServiceHandler) {
+	c.eventHandlers = append(c.eventHandlers, handler)
+}
+
+// Run waits for cache synced and invokes handlers after syncing.
+func (c *ServiceImportConfig) Run(stopCh <-chan struct{}) {
+	klog.Info("Starting service config controller")
+
+	if !cache.WaitForNamedCacheSync("service config", stopCh, c.listerSynced) {
+		return
+	}
+
+	for i := range c.eventHandlers {
+		klog.V(3).Info("Calling handler.OnServiceSynced()")
+		c.eventHandlers[i].OnServiceSynced()
+	}
+}
+
+func (c *ServiceImportConfig) handleAddServiceImport(obj interface{}) {
+	svcImp, ok := obj.(*multicluster.ServiceImport)
+	if !ok {
+		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
+		return
+	}
+	service := convertImportToService(svcImp)
+	klog.Infof("ServiceImport added %s/%s - %s", service.Namespace, service.Name, service.Spec.ClusterIP)
+	for i := range c.eventHandlers {
+		klog.V(4).Info("Calling handler.OnServiceAdd")
+		c.eventHandlers[i].OnServiceAdd(service)
+	}
+}
+
+func (c *ServiceImportConfig) handleUpdateServiceImport(oldObj, newObj interface{}) {
+	oldSvcImp, ok := oldObj.(*multicluster.ServiceImport)
+	if !ok {
+		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", oldObj))
+		return
+	}
+	svcImp, ok := newObj.(*multicluster.ServiceImport)
+	if !ok {
+		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", newObj))
+		return
+	}
+	oldService := convertImportToService(oldSvcImp)
+	service := convertImportToService(svcImp)
+	klog.Infof("ServiceImport updated %s/%s - %s", service.Namespace, service.Name, service.Spec.ClusterIP)
+	for i := range c.eventHandlers {
+		klog.V(4).Info("Calling handler.OnServiceUpdate")
+		c.eventHandlers[i].OnServiceUpdate(oldService, service)
+	}
+}
+
+func (c *ServiceImportConfig) handleDeleteServiceImport(obj interface{}) {
+	svcImp, ok := obj.(*multicluster.ServiceImport)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
+			return
+		}
+		if svcImp, ok = tombstone.Obj.(*multicluster.ServiceImport); !ok {
+			utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
+			return
+		}
+	}
+	service := convertImportToService(svcImp)
+	klog.Infof("ServiceImport deleted %s/%s - %s", service.Namespace, service.Name, service.Spec.ClusterIP)
 	for i := range c.eventHandlers {
 		klog.V(4).Info("Calling handler.OnServiceDelete")
 		c.eventHandlers[i].OnServiceDelete(service)

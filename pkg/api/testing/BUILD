@@ -45,6 +45,7 @@ go_library(
         "//pkg/apis/extensions/install:go_default_library",
         "//pkg/apis/flowcontrol/install:go_default_library",
         "//pkg/apis/imagepolicy/install:go_default_library",
+        "//pkg/apis/multicluster/install:go_default_library",
         "//pkg/apis/networking/fuzzer:go_default_library",
         "//pkg/apis/networking/install:go_default_library",
         "//pkg/apis/node/install:go_default_library",

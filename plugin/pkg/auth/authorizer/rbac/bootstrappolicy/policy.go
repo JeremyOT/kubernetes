@@ -50,6 +50,7 @@ const (
 	certificatesGroup   = "certificates.k8s.io"
 	coordinationGroup   = "coordination.k8s.io"
 	discoveryGroup      = "discovery.k8s.io"
+	multiclusterGroup   = "multicluster.k8s.io"
 	extensionsGroup     = "extensions"
 	policyGroup         = "policy"
 	rbacGroup           = "rbac.authorization.k8s.io"
@@ -508,6 +509,9 @@ func ClusterRoles() []rbacv1.ClusterRole {
 	}
 	if utilfeature.DefaultFeatureGate.Enabled(features.EndpointSlice) {
 		nodeProxierRules = append(nodeProxierRules, rbacv1helpers.NewRule("list", "watch").Groups(discoveryGroup).Resources("endpointslices").RuleOrDie())
+	}
+	if utilfeature.DefaultFeatureGate.Enabled(features.MultiClusterServices) {
+		nodeProxierRules = append(nodeProxierRules, rbacv1helpers.NewRule("list", "watch").Groups(multiclusterGroup).Resources("serviceimports").RuleOrDie())
 	}
 	roles = append(roles, rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "system:node-proxier"},

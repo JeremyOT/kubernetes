@@ -691,6 +691,12 @@ func (s *ProxyServer) Run() error {
 	serviceConfig.RegisterEventHandler(s.Proxier)
 	go serviceConfig.Run(wait.NeverStop)
 
+	if utilfeature.DefaultFeatureGate.Enabled(features.MultiClusterServices) {
+		mcServiceConfig := config.NewServiceImportConfig(informerFactory.Multicluster().V1alpha1().ServiceImports(), s.ConfigSyncPeriod)
+		mcServiceConfig.RegisterEventHandler(s.Proxier)
+		go mcServiceConfig.Run(wait.NeverStop)
+	}
+
 	if s.UseEndpointSlices {
 		endpointSliceConfig := config.NewEndpointSliceConfig(informerFactory.Discovery().V1beta1().EndpointSlices(), s.ConfigSyncPeriod)
 		endpointSliceConfig.RegisterEventHandler(s.Proxier)

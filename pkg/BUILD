@@ -41,6 +41,7 @@ filegroup(
         "//pkg/apis/extensions:all-srcs",
         "//pkg/apis/flowcontrol:all-srcs",
         "//pkg/apis/imagepolicy:all-srcs",
+        "//pkg/apis/multicluster:all-srcs",
         "//pkg/apis/networking:all-srcs",
         "//pkg/apis/node:all-srcs",
         "//pkg/apis/policy:all-srcs",

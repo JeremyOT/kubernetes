@@ -35,6 +35,7 @@ import (
 	discoveryv1beta1 "k8s.io/api/discovery/v1beta1"
 	extensionsv1beta1 "k8s.io/api/extensions/v1beta1"
 	flowcontrolv1alpha1 "k8s.io/api/flowcontrol/v1alpha1"
+	multiclusterv1alpha1 "k8s.io/api/multicluster/v1alpha1"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
 	rbacv1beta1 "k8s.io/api/rbac/v1beta1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
@@ -56,6 +57,7 @@ import (
 	"k8s.io/kubernetes/pkg/apis/discovery"
 	"k8s.io/kubernetes/pkg/apis/flowcontrol"
 	apihelpers "k8s.io/kubernetes/pkg/apis/flowcontrol/util"
+	"k8s.io/kubernetes/pkg/apis/multicluster"
 	"k8s.io/kubernetes/pkg/apis/networking"
 	nodeapi "k8s.io/kubernetes/pkg/apis/node"
 	"k8s.io/kubernetes/pkg/apis/policy"
@@ -496,6 +498,22 @@ func AddHandlers(h printers.PrintHandler) {
 	}
 	h.TableHandler(endpointSliceColumnDefinitions, printEndpointSlice)
 	h.TableHandler(endpointSliceColumnDefinitions, printEndpointSliceList)
+
+	serviceExportColumnDefinitions := []metav1.TableColumnDefinition{
+		{Name: "Name", Type: "string", Format: "name", Description: metav1.ObjectMeta{}.SwaggerDoc()["name"]},
+		{Name: "Age", Type: "string", Description: metav1.ObjectMeta{}.SwaggerDoc()["creationTimestamp"]},
+	}
+	h.TableHandler(serviceExportColumnDefinitions, printServiceExport)
+	h.TableHandler(serviceExportColumnDefinitions, printServiceExportList)
+
+	serviceImportColumnDefinitions := []metav1.TableColumnDefinition{
+		{Name: "Name", Type: "string", Format: "name", Description: metav1.ObjectMeta{}.SwaggerDoc()["name"]},
+		{Name: "Supercluster-IP", Type: "string", Description: multiclusterv1alpha1.ServiceImportSpec{}.SwaggerDoc()["ip"]},
+		{Name: "Port(s)", Type: "string", Description: multiclusterv1alpha1.ServiceImportSpec{}.SwaggerDoc()["ports"]},
+		{Name: "Age", Type: "string", Description: metav1.ObjectMeta{}.SwaggerDoc()["creationTimestamp"]},
+	}
+	h.TableHandler(serviceImportColumnDefinitions, printServiceImport)
+	h.TableHandler(serviceImportColumnDefinitions, printServiceImportList)
 
 	csiNodeColumnDefinitions := []metav1.TableColumnDefinition{
 		{Name: "Name", Type: "string", Format: "name", Description: metav1.ObjectMeta{}.SwaggerDoc()["name"]},
@@ -1298,6 +1316,56 @@ func printEndpointSliceList(list *discovery.EndpointSliceList, options printers.
 	rows := make([]metav1.TableRow, 0, len(list.Items))
 	for i := range list.Items {
 		r, err := printEndpointSlice(&list.Items[i], options)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, r...)
+	}
+	return rows, nil
+}
+
+func printServiceExport(obj *multicluster.ServiceExport, options printers.GenerateOptions) ([]metav1.TableRow, error) {
+	row := metav1.TableRow{
+		Object: runtime.RawExtension{Object: obj},
+	}
+	row.Cells = append(row.Cells, obj.Name, translateTimestampSince(obj.CreationTimestamp))
+	return []metav1.TableRow{row}, nil
+}
+
+func printServiceExportList(list *multicluster.ServiceExportList, options printers.GenerateOptions) ([]metav1.TableRow, error) {
+	rows := make([]metav1.TableRow, 0, len(list.Items))
+	for i := range list.Items {
+		r, err := printServiceExport(&list.Items[i], options)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, r...)
+	}
+	return rows, nil
+}
+
+func printServiceImport(obj *multicluster.ServiceImport, options printers.GenerateOptions) ([]metav1.TableRow, error) {
+	row := metav1.TableRow{
+		Object: runtime.RawExtension{Object: obj},
+	}
+	ip := obj.Spec.IP
+	if len(ip) == 0 {
+		ip = "<none>"
+	}
+	svcPorts := makePortString(obj.Spec.Ports)
+	if len(svcPorts) == 0 {
+		svcPorts = "<none>"
+	}
+
+	row.Cells = append(row.Cells, obj.Name, ip, svcPorts, translateTimestampSince(obj.CreationTimestamp))
+	row.Cells = append(row.Cells, obj.Name)
+	return []metav1.TableRow{row}, nil
+}
+
+func printServiceImportList(list *multicluster.ServiceImportList, options printers.GenerateOptions) ([]metav1.TableRow, error) {
+	rows := make([]metav1.TableRow, 0, len(list.Items))
+	for i := range list.Items {
+		r, err := printServiceImport(&list.Items[i], options)
 		if err != nil {
 			return nil, err
 		}
