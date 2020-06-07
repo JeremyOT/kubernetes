@@ -46,6 +46,8 @@ import (
 	"k8s.io/apiserver/pkg/server/mux"
 	"k8s.io/apiserver/pkg/server/routes"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -77,12 +79,14 @@ import (
 	"k8s.io/kubernetes/pkg/proxy/userspace"
 	proxyutil "k8s.io/kubernetes/pkg/proxy/util"
 	"k8s.io/kubernetes/pkg/util/configz"
+	"k8s.io/kubernetes/pkg/util/crdfeature"
 	"k8s.io/kubernetes/pkg/util/filesystem"
 	utilflag "k8s.io/kubernetes/pkg/util/flag"
 	utilipset "k8s.io/kubernetes/pkg/util/ipset"
 	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
 	utilipvs "k8s.io/kubernetes/pkg/util/ipvs"
 	"k8s.io/kubernetes/pkg/util/oom"
+	mcsv1alpha1 "k8s.io/mcs-api/pkg/apis/multicluster/v1alpha1"
 	"k8s.io/utils/exec"
 	utilpointer "k8s.io/utils/pointer"
 )
@@ -92,6 +96,10 @@ const (
 	proxyModeIPTables    = "iptables"
 	proxyModeIPVS        = "ipvs"
 	proxyModeKernelspace = "kernelspace"
+)
+
+var (
+	serviceImportGVR = mcsv1alpha1.SchemeGroupVersion.WithResource("serviceimports")
 )
 
 // proxyRun defines the interface to run a specified ProxyServer
@@ -518,6 +526,7 @@ with the apiserver API to configure the proxy.`,
 type ProxyServer struct {
 	Client                 clientset.Interface
 	EventClient            v1core.EventsGetter
+	DynamicClient          dynamic.Interface
 	IptInterface           utiliptables.Interface
 	IpvsInterface          utilipvs.Interface
 	IpsetInterface         utilipset.Interface
@@ -540,7 +549,7 @@ type ProxyServer struct {
 
 // createClients creates a kube client and an event client from the given config and masterOverride.
 // TODO remove masterOverride when CLI flags are removed.
-func createClients(config componentbaseconfig.ClientConnectionConfiguration, masterOverride string) (clientset.Interface, v1core.EventsGetter, error) {
+func createClients(config componentbaseconfig.ClientConnectionConfiguration, masterOverride string) (clientset.Interface, v1core.EventsGetter, dynamic.Interface, error) {
 	var kubeConfig *rest.Config
 	var err error
 
@@ -555,7 +564,7 @@ func createClients(config componentbaseconfig.ClientConnectionConfiguration, mas
 			&clientcmd.ConfigOverrides{ClusterInfo: clientcmdapi.Cluster{Server: masterOverride}}).ClientConfig()
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	kubeConfig.AcceptContentTypes = config.AcceptContentTypes
@@ -565,15 +574,20 @@ func createClients(config componentbaseconfig.ClientConnectionConfiguration, mas
 
 	client, err := clientset.NewForConfig(kubeConfig)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	eventClient, err := clientset.NewForConfig(kubeConfig)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	return client, eventClient.CoreV1(), nil
+	dynamicClient, err := dynamic.NewForConfig(kubeConfig)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return client, eventClient.CoreV1(), dynamicClient, nil
 }
 
 // Run runs the specified ProxyServer.  This should never exit (unless CleanupAndExit is set).
@@ -718,6 +732,22 @@ func (s *ProxyServer) Run() error {
 		// This has to start after the calls to NewNodeConfig because that must
 		// configure the shared informer event handler first.
 		currentNodeInformerFactory.Start(wait.NeverStop)
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.MultiClusterServices) {
+		serviceImportFeature := crdfeature.WithChan(
+			func(stopCh <-chan struct{}) {
+				informerFactory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(s.DynamicClient, s.ConfigSyncPeriod, metav1.NamespaceAll,
+					func(options *metav1.ListOptions) {
+						options.LabelSelector = labelSelector.String()
+					})
+				serviceImportConfig := config.NewServiceImportConfig(informerFactory.ForResource(serviceImportGVR), s.ConfigSyncPeriod)
+				serviceImportConfig.RegisterEventHandler(s.Proxier)
+				go serviceImportConfig.Run(stopCh)
+				informerFactory.Start(stopCh)
+			})
+		watcher := crdfeature.NewWatcher(s.DynamicClient, serviceImportGVR, s.ConfigSyncPeriod, serviceImportFeature)
+		watcher.Start(wait.NeverStop)
 	}
 
 	// Birth Cry after the birth is successful

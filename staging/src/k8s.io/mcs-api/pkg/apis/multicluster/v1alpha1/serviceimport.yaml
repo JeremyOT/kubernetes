@@ -1,0 +1,60 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: serviceimports.multicluster.k8s.io
+  annotations:
+    api-approved.kubernetes.io: unapproved
+spec:
+  group: multicluster.k8s.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                ports:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      protocol:
+                        type: string
+                      port:
+                        type: integer
+                      targetPort:
+                        x-kubernetes-int-or-string: true
+                      nodePort:
+                        type: integer
+                ip:
+                  type: string
+                type:
+                  type: string
+            status:
+              type: object
+              properties:
+                clusters:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      cluster:
+                        type: string
+      additionalPrinterColumns:
+      - name: IP
+        type: string
+        description: The VIP for this ServiceImport
+        jsonPath: .spec.ip
+  scope: Namespaced
+  names:
+    plural: serviceimports
+    singular: serviceimport
+    kind: ServiceImport
+    shortNames:
+    - svcim
