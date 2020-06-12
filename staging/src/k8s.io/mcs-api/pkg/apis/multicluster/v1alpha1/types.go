@@ -21,7 +21,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // ServiceExport declares that the associated service should be exported to
@@ -48,20 +47,18 @@ type ServiceExportStatus struct {
 type ServiceExportConditionType string
 
 const (
-	// ServiceExportExported means that the service referenced by this
-	// service export has been synced to all clusters in the supercluster
-	ServiceExportExported ServiceExportConditionType = "Exported"
-	// ServiceExportInvalid means that the service marked for export has an
-	// unexportable service type (ExternalName)
-	ServiceExportInvalid ServiceExportConditionType = "InvalidServiceType"
-	// ServiceExportHeadless describes the headlessness of the supercluster
-	// service. Only required to be set if at least one cluster (including
-	// the local one) has a matching headless service marked for export.
-	// "True" when the corresponding ServiceImport is headless. "False" if
-	// at least one matching service is not headless.
-	// If any exported services disagree, cluster names and respective
-	// headlessness should be listed in the condition message.
-	ServiceExportHeadless ServiceExportConditionType = "Headless"
+	// ServiceExportValid means that the service referenced by this
+	// service export has been recognized as valid by an mcs-controller.
+	// This will be false if the service is found to be unexportable
+	// (ExternalName, not found).
+	ServiceExportValid ServiceExportConditionType = "Valid"
+	// ServiceExportConflict means that there is a conflict between two
+	// exports for the same Service. When "True", the condition message
+	// should contain enough information to diagnose the conflict:
+	// field(s) under contention, which cluster won, and why.
+	// Users should not expect detailed per-cluster information in the
+	// conflict message.
+	ServiceExportConflict ServiceExportConditionType = "Conflict"
 )
 
 // ServiceExportCondition contains details for the current condition of this
@@ -81,7 +78,6 @@ type ServiceExportCondition struct {
 	Message *string `json:"message,omitempty"`
 }
 
-// +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // ServiceImport describes a service imported from clusters in a supercluster.
@@ -108,11 +104,44 @@ const (
 // ServiceImportSpec describes an imported service and the information necessary to consume it.
 type ServiceImportSpec struct {
 	// +listType=atomic
-	Ports []v1.ServicePort `json:"ports"`
+	Ports []ServicePort `json:"ports"`
 	// +optional
 	IP string `json:"ip,omitempty"`
 	// +optional
 	Type ServiceImportType `json:"type"`
+	// +optional
+	SessionAffinity v1.ServiceAffinity `json:"sessionAffinity"`
+	// +optional
+	SessionAffinityConfig *v1.SessionAffinityConfig `json:"sessionAffinityConfig"`
+}
+
+// ServicePort represents the port on which the service is exposed
+type ServicePort struct {
+	// The name of this port within the service. This must be a DNS_LABEL.
+	// All ports within a ServiceSpec must have unique names. When considering
+	// the endpoints for a Service, this must match the 'name' field in the
+	// EndpointPort.
+	// Optional if only one ServicePort is defined on this service.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// The IP protocol for this port. Supports "TCP", "UDP", and "SCTP".
+	// Default is TCP.
+	// +optional
+	Protocol v1.Protocol `json:"protocol,omitempty"`
+
+	// The application protocol for this port.
+	// This field follows standard Kubernetes label syntax.
+	// Un-prefixed names are reserved for IANA standard service names (as per
+	// RFC-6335 and http://www.iana.org/assignments/service-names).
+	// Non-standard protocols should use prefixed names such as
+	// mycompany.com/my-custom-protocol.
+	// Field can be enabled with ServiceAppProtocol feature gate.
+	// +optional
+	AppProtocol *string `json:"appProtocol,omitempty"`
+
+	// The port that will be exposed by this service.
+	Port int32 `json:"port"`
 }
 
 // ServiceImportStatus describes derived state of an imported service.
@@ -128,10 +157,6 @@ type ServiceImportStatus struct {
 // ClusterStatus contains service configuration mapped to a specific source cluster
 type ClusterStatus struct {
 	Cluster string `json:"cluster"`
-	// +optional
-	SessionAffinity v1.ServiceAffinity `json:"sessionAffinity"`
-	// +optional
-	SessionAffinityConfig *v1.SessionAffinityConfig `json:"sessionAffinityConfig"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

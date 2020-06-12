@@ -402,6 +402,19 @@ func NewServiceImportConfig(serviceInformer informers.GenericInformer, resyncPer
 	return result
 }
 
+func convertToCoreV1ServicePorts(sp []mcsv1alpha1.ServicePort) []v1.ServicePort {
+	cp := make([]v1.ServicePort, len(sp))
+	for i, p := range sp {
+		cp[i] = v1.ServicePort{
+			Name:        p.Name,
+			Port:        p.Port,
+			Protocol:    p.Protocol,
+			AppProtocol: p.AppProtocol,
+		}
+	}
+	return cp
+}
+
 func convertImportToService(svc *mcsv1alpha1.ServiceImport) *v1.Service {
 	return &v1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -409,9 +422,11 @@ func convertImportToService(svc *mcsv1alpha1.ServiceImport) *v1.Service {
 			Name:      util.ServiceImportName(svc.Name),
 		},
 		Spec: v1.ServiceSpec{
-			ClusterIP: svc.Spec.IP,
-			Ports:     svc.Spec.Ports,
-			Type:      v1.ServiceTypeClusterIP,
+			ClusterIP:             svc.Spec.IP,
+			Ports:                 convertToCoreV1ServicePorts(svc.Spec.Ports),
+			Type:                  v1.ServiceTypeClusterIP,
+			SessionAffinity:       svc.Spec.SessionAffinity,
+			SessionAffinityConfig: svc.Spec.SessionAffinityConfig,
 		},
 	}
 }
