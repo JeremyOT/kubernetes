@@ -22,9 +22,6 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1beta1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/informers"
 	coreinformers "k8s.io/client-go/informers/core/v1"
@@ -32,7 +29,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/proxy/util"
-	mcsv1alpha1 "k8s.io/mcs-api/pkg/apis/multicluster/v1alpha1"
 )
 
 // ServiceHandler is an abstract interface of objects which receive
@@ -379,6 +375,20 @@ func (c *ServiceConfig) handleDeleteService(obj interface{}) {
 }
 
 // ServiceImportConfig tracks a set of service configurations.
+//
+// ServiceImports with type SuperclusterIP behave exactly like ClusterIP
+// services once imported. Passing a common representation of a service
+// to the proxy implementation avoids the need to plumb both types
+// through with nearly identical code for little gain. The properties
+// currently used for ServiceImport proxy programming are a strict subset
+// of those used from v1.Service so for now we use the existing
+// v1.Service as the common representation as it's already supported by
+// each proxy mode. In the future, if ServiceImport and Service diverge,
+// we would want to switch to a purpose-built common representation.
+//
+// When converted to standard Services, ServiceImports are assigned a
+// prefix that is not a valid service name to avoid conflicting with
+// any same-named services that may exist.
 type ServiceImportConfig struct {
 	listerSynced  cache.InformerSynced
 	eventHandlers []ServiceHandler
@@ -402,48 +412,10 @@ func NewServiceImportConfig(serviceInformer informers.GenericInformer, resyncPer
 	return result
 }
 
-func convertToCoreV1ServicePorts(sp []mcsv1alpha1.ServicePort) []v1.ServicePort {
-	cp := make([]v1.ServicePort, len(sp))
-	for i, p := range sp {
-		cp[i] = v1.ServicePort{
-			Name:        p.Name,
-			Port:        p.Port,
-			Protocol:    p.Protocol,
-			AppProtocol: p.AppProtocol,
-		}
-	}
-	return cp
-}
-
-func convertImportToService(svc *mcsv1alpha1.ServiceImport) *v1.Service {
-	return &v1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: svc.Namespace,
-			Name:      util.ServiceImportName(svc.Name),
-		},
-		Spec: v1.ServiceSpec{
-			ClusterIP:             svc.Spec.IP,
-			Ports:                 convertToCoreV1ServicePorts(svc.Spec.Ports),
-			Type:                  v1.ServiceTypeClusterIP,
-			SessionAffinity:       svc.Spec.SessionAffinity,
-			SessionAffinityConfig: svc.Spec.SessionAffinityConfig,
-		},
-	}
-}
-
-func toServiceImport(obj interface{}) (*mcsv1alpha1.ServiceImport, error) {
-	resource, ok := obj.(*unstructured.Unstructured)
-	if !ok {
-		return nil, fmt.Errorf("unexpected object type: %v", obj)
-	}
-	var serviceImport mcsv1alpha1.ServiceImport
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(resource.UnstructuredContent(), &serviceImport); err != nil {
-		return nil, err
-	}
-	return &serviceImport, nil
-}
-
 // RegisterEventHandler registers a handler which is called on every service change.
+//
+// Because we use Service as a common representation for both traditional Services
+// and ServiceImports, ServiceImportConfig uses instances of ServiceHandler.
 func (c *ServiceImportConfig) RegisterEventHandler(handler ServiceHandler) {
 	c.eventHandlers = append(c.eventHandlers, handler)
 }
@@ -457,63 +429,60 @@ func (c *ServiceImportConfig) Run(stopCh <-chan struct{}) {
 	}
 
 	for i := range c.eventHandlers {
-		klog.V(3).Info("Calling handler.OnServiceImportSynced()")
+		klog.V(3).Info("Calling handler.OnServiceSynced()")
 		c.eventHandlers[i].OnServiceSynced()
 	}
 }
 
 func (c *ServiceImportConfig) handleAddServiceImport(obj interface{}) {
-	serviceImport, err := toServiceImport(obj)
+	serviceImport, err := util.ServiceImportFromInformer(obj)
 	if err != nil {
 		utilruntime.HandleError(err)
 		return
 	}
-	service := convertImportToService(serviceImport)
-	klog.Infof("Added import: %s/%s", service.Namespace, service.Name)
+	service := util.ServiceFromImport(serviceImport)
 	for i := range c.eventHandlers {
-		klog.V(4).Info("Calling handler.OnServiceImportAdd")
+		klog.V(4).Info("Calling handler.OnServiceAdd")
 		c.eventHandlers[i].OnServiceAdd(service)
 	}
 }
 
 func (c *ServiceImportConfig) handleUpdateServiceImport(oldObj, newObj interface{}) {
-	oldServiceImport, err := toServiceImport(oldObj)
+	oldServiceImport, err := util.ServiceImportFromInformer(oldObj)
 	if err != nil {
 		utilruntime.HandleError(err)
 		return
 	}
-	serviceImport, err := toServiceImport(newObj)
+	serviceImport, err := util.ServiceImportFromInformer(newObj)
 	if err != nil {
 		utilruntime.HandleError(err)
 		return
 	}
-	oldService := convertImportToService(oldServiceImport)
-	service := convertImportToService(serviceImport)
-	klog.Infof("Updated import: %s/%s", service.Namespace, service.Name)
+	oldService := util.ServiceFromImport(oldServiceImport)
+	service := util.ServiceFromImport(serviceImport)
 	for i := range c.eventHandlers {
-		klog.V(4).Info("Calling handler.OnServiceImportUpdate")
+		klog.V(4).Info("Calling handler.OnServiceUpdate")
 		c.eventHandlers[i].OnServiceUpdate(oldService, service)
 	}
 }
 
 func (c *ServiceImportConfig) handleDeleteServiceImport(obj interface{}) {
-	serviceImport, err := toServiceImport(obj)
+	serviceImport, err := util.ServiceImportFromInformer(obj)
 	if err != nil {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
 			utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 			return
 		}
-		serviceImport, err = toServiceImport(tombstone.Obj)
+		serviceImport, err = util.ServiceImportFromInformer(tombstone.Obj)
 		if err != nil {
 			utilruntime.HandleError(err)
 			return
 		}
 	}
-	service := convertImportToService(serviceImport)
-	klog.Infof("Deleted import: %s/%s", service.Namespace, service.Name)
+	service := util.ServiceFromImport(serviceImport)
 	for i := range c.eventHandlers {
-		klog.V(4).Info("Calling handler.OnServiceImportDelete")
+		klog.V(4).Info("Calling handler.OnServiceDelete")
 		c.eventHandlers[i].OnServiceDelete(service)
 	}
 }
