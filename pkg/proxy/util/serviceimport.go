@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/klog"
 	mcsv1alpha1 "k8s.io/mcs-api/pkg/apis/multicluster/v1alpha1"
 )
 
@@ -87,4 +88,38 @@ func ServiceImportFromInformer(obj interface{}) (*mcsv1alpha1.ServiceImport, err
 		return nil, err
 	}
 	return &serviceImport, nil
+}
+
+type importServiceWrapper struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              struct {
+		v1.ServiceSpec `json:",inline"`
+		IP             string `json:"ip,omitempty"`
+	} `json:"spec,omitempty"`
+}
+
+// ServiceFromImportInformer takes an interface passed by an unstructured informer
+// and attempts to convert it to a Service.
+func ServiceFromImportInformer(obj interface{}) (*v1.Service, error) {
+	resource, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		return nil, fmt.Errorf("unexpected object type: %v", obj)
+	}
+	var serviceImport importServiceWrapper
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(resource.UnstructuredContent(), &serviceImport); err != nil {
+		return nil, err
+	}
+	serviceImport.Name = ServiceImportName(serviceImport.Name)
+	if serviceImport.Spec.Type == "Headless" {
+		serviceImport.Spec.ClusterIP = "none"
+	} else {
+		serviceImport.Spec.ClusterIP = serviceImport.Spec.IP
+	}
+	serviceImport.Spec.Type = v1.ServiceTypeClusterIP
+	klog.Infof("READ IMPORT: %#v", serviceImport)
+	return &v1.Service{
+		ObjectMeta: serviceImport.ObjectMeta,
+		Spec:       serviceImport.Spec.ServiceSpec,
+	}, nil
 }

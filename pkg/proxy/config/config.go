@@ -435,12 +435,11 @@ func (c *ServiceImportConfig) Run(stopCh <-chan struct{}) {
 }
 
 func (c *ServiceImportConfig) handleAddServiceImport(obj interface{}) {
-	serviceImport, err := util.ServiceImportFromInformer(obj)
+	service, err := util.ServiceFromImportInformer(obj)
 	if err != nil {
 		utilruntime.HandleError(err)
 		return
 	}
-	service := util.ServiceFromImport(serviceImport)
 	for i := range c.eventHandlers {
 		klog.V(4).Info("Calling handler.OnServiceAdd")
 		c.eventHandlers[i].OnServiceAdd(service)
@@ -448,18 +447,16 @@ func (c *ServiceImportConfig) handleAddServiceImport(obj interface{}) {
 }
 
 func (c *ServiceImportConfig) handleUpdateServiceImport(oldObj, newObj interface{}) {
-	oldServiceImport, err := util.ServiceImportFromInformer(oldObj)
+	oldService, err := util.ServiceFromImportInformer(oldObj)
 	if err != nil {
 		utilruntime.HandleError(err)
 		return
 	}
-	serviceImport, err := util.ServiceImportFromInformer(newObj)
+	service, err := util.ServiceFromImportInformer(newObj)
 	if err != nil {
 		utilruntime.HandleError(err)
 		return
 	}
-	oldService := util.ServiceFromImport(oldServiceImport)
-	service := util.ServiceFromImport(serviceImport)
 	for i := range c.eventHandlers {
 		klog.V(4).Info("Calling handler.OnServiceUpdate")
 		c.eventHandlers[i].OnServiceUpdate(oldService, service)
@@ -467,20 +464,19 @@ func (c *ServiceImportConfig) handleUpdateServiceImport(oldObj, newObj interface
 }
 
 func (c *ServiceImportConfig) handleDeleteServiceImport(obj interface{}) {
-	serviceImport, err := util.ServiceImportFromInformer(obj)
+	service, err := util.ServiceFromImportInformer(obj)
 	if err != nil {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
 			utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 			return
 		}
-		serviceImport, err = util.ServiceImportFromInformer(tombstone.Obj)
+		service, err = util.ServiceFromImportInformer(tombstone.Obj)
 		if err != nil {
 			utilruntime.HandleError(err)
 			return
 		}
 	}
-	service := util.ServiceFromImport(serviceImport)
 	for i := range c.eventHandlers {
 		klog.V(4).Info("Calling handler.OnServiceDelete")
 		c.eventHandlers[i].OnServiceDelete(service)
